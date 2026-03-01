@@ -3,6 +3,7 @@ import pandas as pd
 import sys
 import os
 
+# Configuración de rutas para módulos internos
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 try:
@@ -29,8 +30,9 @@ with st.sidebar:
 st.title("🚀 Planificación WFM en Cascada")
 
 # CARGA INICIAL
-data = load_data(fuente) # Asumimos que carga el dataframe base
+data = load_data(fuente)
 
+# TODO el proceso debe estar dentro de este bloque if para asegurar que 'data' existe
 if data is not None:
     pcrc = st.selectbox("Selecciona PCRC / Skill", data['pcrc'].unique())
     df_pcrc = data[data['pcrc'] == pcrc].copy()
@@ -44,26 +46,40 @@ if data is not None:
         if st.button("Validar Meses y Continuar"):
             st.success("Volumen mensual validado.")
 
-# --- PASO 2: DIARIO ---
-st.header("Paso 2: Pronóstico Diario (Day-of-Week)")
-with st.expander("Ver Análisis Diario"):
-    # Resumen por día de la semana para validar 100/70/30
-    df_daily = df_pcrc.copy()
-    df_daily['dia_nombre'] = df_daily['ds'].dt.day_name()
-    order = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
-    resumen_semanal = df_daily.groupby('dia_nombre')['y'].mean().reindex(order)
-    st.bar_chart(resumen_semanal)
-    st.caption("Validación: Lunes-Viernes (Pico), Sábado (70%), Domingo (30%)")
+    # --- PASO 2: DIARIO (DISTRIBUCIÓN) ---
+    st.header("Paso 2: Pronóstico Diario (Day-of-Week)")
+    with st.expander("Ver Análisis Diario"):
+        df_daily = df_pcrc.copy()
+        df_daily['dia_nombre'] = df_daily['ds'].dt.day_name()
+        order = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
+        resumen_semanal = df_daily.groupby('dia_nombre')['y'].mean().reindex(order)
+        st.bar_chart(resumen_semanal)
+        st.caption("Validación: Lunes-Viernes (Pico), Sábado (70%), Domingo (30%)")
+        if st.button("Validar Días y Continuar"):
+            st.success("Distribución diaria validada.")
 
-# --- PASO 3: INTERVALO ---
-st.header("Paso 3: Pronóstico por Intervalo (30 min)")
-with st.expander("Ejecutar Forecast de Detalle"):
-    # ... (código anterior de Prophet) ...
-    if 'current_forecast' in st.session_state:
-        # Mostrar un solo día para ver la "Doble Joroba" claramente
-        st.subheader("Curva de Llegada (Doble Joroba)")
-        un_dia = st.session_state.current_forecast.head(48)
-        st.line_chart(un_dia.set_index('ds')['yhat'])
+    # --- PASO 3: INTERVALO (30 MIN) ---
+    st.header("Paso 3: Pronóstico por Intervalo (30 min)")
+    with st.expander("Ejecutar Forecast de Detalle"):
+        col1, col2 = st.columns(2)
+        f_ini = col1.date_input("Fecha Inicio", df_pcrc['ds'].max().date())
+        f_fin = col2.date_input("Fecha Fin", df_pcrc['ds'].max().date() + pd.Timedelta(days=7))
+        
+        if st.button("Ejecutar Forecast Detallado"):
+            dias_a_predecir = (f_fin - f_ini).days + 1
+            periodos = dias_a_predecir * 48
+            
+            with st.spinner("Calculando curvas con doble joroba..."):
+                forecast = run_prophet(df_pcrc, periodos)
+                forecast['yhat'] = forecast['yhat'].clip(lower=0).round().astype(int)
+                # Guardamos en session_state para que el Paso 4 lo vea
+                st.session_state.current_forecast = forecast
+                
+        if 'current_forecast' in st.session_state:
+            st.subheader("Curva de Llegada (Doble Joroba)")
+            # Mostramos las primeras 48 filas (1 día completo)
+            un_dia = st.session_state.current_forecast.head(48)
+            st.line_chart(un_dia.set_index('ds')['yhat'])
 
     # --- PASO 4: STAFFING (FINAL) ---
     st.header("Paso 4: Dimensionamiento de Personal")
@@ -76,7 +92,7 @@ with st.expander("Ejecutar Forecast de Detalle"):
             c2.metric("Agentes Requeridos (Pico)", int(res_wfm['agentes_netos'].max()))
             c3.metric("Plantilla Nominal", int(res_wfm['agentes_nominales'].max()))
             
-            st.subheader("Curva de Agentes vs Llamadas")
+            st.subheader("Requerimiento de Agentes por Intervalo")
             st.line_chart(res_wfm.head(336).set_index('ds')[['agentes_netos', 'agentes_nominales']])
             
             csv = res_wfm.to_csv(index=False).encode('utf-8')
