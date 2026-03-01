@@ -85,58 +85,55 @@ if st.session_state.step == 1:
             st.session_state.step = 2
             st.rerun()
 
-# --- PASO 2: FORECAST & BACKTESTING ---
+# --- PASO 2: FORECAST & COMPARATIVA ---
 elif st.session_state.step == 2:
-    st.header("2️⃣ Pronóstico e Indicadores de Precisión")
+    st.header("2️⃣ Pronóstico: Prophet vs SARIMA")
     df = st.session_state.data
     df['ds'] = pd.to_datetime(df['ds'])
     
-    # RANGO POR DEFECTO: 01/11/2025 al 01/03/2026
     col_f1, col_f2 = st.columns(2)
-    f_ini_def = datetime(2025, 11, 1).date()
-    f_fin_def = datetime(2026, 3, 1).date()
+    f_ini = col_f1.date_input("Inicio del Pronóstico", datetime(2025, 11, 1).date())
+    f_fin = col_f2.date_input("Fin del Pronóstico", datetime(2026, 3, 1).date())
     
-    f_ini = col_f1.date_input("Inicio del Pronóstico", f_ini_def)
-    f_fin = col_f2.date_input("Fin del Pronóstico", f_fin_def)
+    modelo_sel = st.selectbox("Selecciona Algoritmo:", ["Prophet (AI)", "SARIMA (Estadístico)"])
     
-    if st.button("🚀 Ejecutar Pronóstico"):
-        # Calculamos periodos necesarios desde el inicio histórico hasta la fecha fin elegida
-        fecha_referencia = min(df['ds'].min().date(), f_ini)
-        dias_totales = (pd.to_datetime(f_fin).date() - fecha_referencia).days
-        
-        with st.spinner("Entrenando modelos..."):
-            forecast_full = run_prophet(df, dias_totales * 48)
-            mask = (forecast_full['ds'] >= pd.to_datetime(f_ini)) & (forecast_full['ds'] <= pd.to_datetime(f_fin))
-            forecast_filtered = forecast_full.loc[mask].copy()
-            forecast_filtered['yhat'] = forecast_filtered['yhat'].clip(lower=0).round().astype(int)
-            st.session_state.current_forecast = forecast_filtered
+    if st.button("🚀 Ejecutar Modelo"):
+        dias_forecast = (pd.to_datetime(f_fin).date() - df['ds'].min().date()).days
+        with st.spinner(f"Calculando con {modelo_sel}..."):
+            if modelo_sel == "Prophet (AI)":
+                forecast_res = run_prophet(df, dias_forecast * 48)
+            else:
+                forecast_res = run_sarima(df, dias_forecast * 48)
+            
+            # Filtro estricto al rango pedido
+            mask = (forecast_res['ds'] >= pd.to_datetime(f_ini)) & (forecast_res['ds'] <= pd.to_datetime(f_fin))
+            st.session_state.current_forecast = forecast_res.loc[mask].copy()
             st.session_state.f_range = (pd.to_datetime(f_ini), pd.to_datetime(f_fin))
 
     if 'current_forecast' in st.session_state:
         forecast = st.session_state.current_forecast
         f_start, f_end = st.session_state.f_range
         
-        # MAPE y Sombreado
+        # Auditoría de Precisión (MAPE)
         real_overlap = df[(df['ds'] >= f_start) & (df['ds'] <= f_end)]
         fig = go.Figure()
         
         if not real_overlap.empty:
             eval_df = real_overlap.merge(forecast, on='ds')
             if not eval_df.empty:
+                from sklearn.metrics import mean_absolute_percentage_error
                 mape = mean_absolute_percentage_error(eval_df['y'], eval_df['yhat'])
-                st.metric("🎯 Precisión (MAPE)", f"{mape:.2%}")
+                st.metric(f"🎯 Precisión {modelo_sel}", f"{mape:.2%}")
+                
+                # Sombreado de Backtesting
                 fig.add_vrect(x0=eval_df['ds'].min(), x1=eval_df['ds'].max(), 
-                             fillcolor="rgba(173, 216, 230, 0.3)", layer="below", line_width=0,
-                             annotation_text="Backtesting")
+                             fillcolor="rgba(255, 165, 0, 0.2)", layer="below", line_width=0)
 
-        fig.add_trace(go.Scatter(x=df['ds'], y=df['y'], name='Histórico Real', line=dict(color='#4682B4')))
-        fig.add_trace(go.Scatter(x=forecast['ds'], y=forecast['yhat'], name='Pronóstico', line=dict(color='#FF8C00', dash='dot')))
-        fig.update_xaxes(range=[min(df['ds'].min(), f_start), f_end])
+        # Gráfico Unificado
+        fig.add_trace(go.Scatter(x=df['ds'], y=df['y'], name='Real', line=dict(color='#4682B4')))
+        fig.add_trace(go.Scatter(x=forecast['ds'], y=forecast['yhat'], name=f'Predicción {modelo_sel}', line=dict(color='#FF8C00', dash='dot')))
+        fig.update_xaxes(range=[df['ds'].min(), f_end])
         st.plotly_chart(fig, use_container_width=True)
-        
-        c_n1, c_n2 = st.columns(2)
-        if c_n1.button("⬅️ Atrás"): st.session_state.step = 1; st.rerun()
-        if c_n2.button("Ir al Staffing ➡️"): st.session_state.step = 3; st.rerun()
 
 # --- PASO 3: STAFFING JERÁRQUICO ---
 elif st.session_state.step == 3:
