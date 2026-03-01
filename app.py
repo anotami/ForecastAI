@@ -12,7 +12,7 @@ from modules.data_loader import load_data
 from modules.models import run_prophet, run_sarima
 from modules.staffing import get_staffing_requirements
 
-st.set_page_config(layout="wide", page_title="WFM Engine - Miraflores")
+st.set_page_config(layout="wide", page_title="WFM Engine - Miraflores") # Eliminado width='stretch' problemático
 
 # --- ESTADOS Y SIDEBAR ---
 if 'step' not in st.session_state: st.session_state.step = 1
@@ -25,11 +25,11 @@ with st.sidebar:
     st.session_state.aht_val = st.number_input("TMO (Seg)", value=float(st.session_state.aht_val))
     st.session_state.shr_val = st.slider("Shrinkage (%)", 0.0, 0.9, float(st.session_state.shr_val))
     sl = st.slider("Target SL (%)", 0.5, 0.99, 0.8)
-    if st.button("🔄 Reiniciar"): 
-        st.session_state.step = 1
+    if st.button("🔄 Reiniciar Todo"):
+        for key in st.session_state.keys(): del st.session_state[key]
         st.rerun()
 
-# --- PASO 1: INGESTA (Fecha por defecto: 1 de enero 2026) ---
+# --- PASO 1: INGESTA (1 de enero 2026) ---
 if st.session_state.step == 1:
     st.header("1️⃣ Configuración de Datos")
     f_ini_default = datetime(2026, 1, 1).date()
@@ -41,42 +41,64 @@ if st.session_state.step == 1:
         st.session_state.step = 2
         st.rerun()
 
-# --- PASO 2: PRONÓSTICO (1/11/25 al 1/3/26) ---
+# --- PASO 2: PRONÓSTICO (Con Opción de Selección de Modelo) ---
 elif st.session_state.step == 2:
-    st.header("2️⃣ Comparativa: Prophet vs SARIMA")
+    st.header("2️⃣ Pronóstico Inteligente")
     df = st.session_state.data
     df['ds'] = pd.to_datetime(df['ds'])
     
-    f_ini = st.date_input("Inicio Forecast", datetime(2025, 11, 1).date())
-    f_fin = st.date_input("Fin Forecast", datetime(2026, 3, 1).date())
+    col_f1, col_f2 = st.columns(2)
+    f_ini = col_f1.date_input("Inicio Forecast", datetime(2025, 11, 1).date())
+    f_fin = col_f2.date_input("Fin Forecast", datetime(2026, 3, 1).date())
+    
+    modo_ejecucion = st.radio("Modo de Procesamiento:", 
+                              ["Solo Prophet (Rápido)", "Solo SARIMA", "Comparativa Dual (Lento)"], 
+                              horizontal=True)
     
     if st.button("🚀 Ejecutar Modelos"):
         dias_f = (pd.to_datetime(f_fin).date() - df['ds'].min().date()).days
-        with st.spinner("Procesando dual..."):
-            fp = run_prophet(df, dias_f * 48)
-            fs = run_sarima(df, dias_f * 48)
-            mask = (fp['ds'] >= pd.to_datetime(f_ini)) & (fp['ds'] <= pd.to_datetime(f_fin))
-            st.session_state.forecast_p = fp.loc[mask].copy()
-            st.session_state.forecast_s = fs.loc[mask].copy()
+        with st.spinner(f"Procesando {modo_ejecucion}..."):
+            if "Prophet" in modo_ejecucion or "Dual" in modo_ejecucion:
+                st.session_state.fp = run_prophet(df, dias_f * 48)
+            if "SARIMA" in modo_ejecucion or "Dual" in modo_ejecucion:
+                st.session_state.fs = run_sarima(df, dias_f * 48)
+            
             st.session_state.f_range = (pd.to_datetime(f_ini), pd.to_datetime(f_fin))
 
-    if 'forecast_p' in st.session_state:
-        # Aquí va el gráfico y las métricas de MAPE comparadas
-        st.metric("MAPE Prophet", "Calculando...") # Lógica de MAPE intersección
+    if 'f_range' in st.session_state:
+        f_start, f_end = st.session_state.f_range
         fig = go.Figure()
-        fig.add_trace(go.Scatter(x=df['ds'], y=df['y'], name='Real', line=dict(color='#4682B4')))
-        fig.add_trace(go.Scatter(x=st.session_state.forecast_p['ds'], y=st.session_state.forecast_p['yhat'], 
-                                 name='Prophet', line=dict(color='#FF8C00', dash='dot')))
+        fig.add_trace(go.Scatter(x=df['ds'], y=df['y'], name='Histórico Real', line=dict(color='#4682B4')))
+        
+        # Lógica de visualización según selección
+        if 'fp' in st.session_state:
+            mask_p = (st.session_state.fp['ds'] >= f_start) & (st.session_state.fp['ds'] <= f_end)
+            df_p = st.session_state.fp.loc[mask_p]
+            fig.add_trace(go.Scatter(x=df_p['ds'], y=df_p['yhat'], name='Prophet', line=dict(color='#FF8C00', dash='dot')))
+            
+        if 'fs' in st.session_state:
+            mask_s = (st.session_state.fs['ds'] >= f_start) & (st.session_state.fs['ds'] <= f_end)
+            df_s = st.session_state.fs.loc[mask_s]
+            fig.add_trace(go.Scatter(x=df_s['ds'], y=df_s['yhat'], name='SARIMA', line=dict(color='#2E8B57', dash='dash')))
+
         st.plotly_chart(fig, use_container_width=True)
-        if st.button("Siguiente ➡️"): 
-            st.session_state.current_forecast = st.session_state.forecast_p
+        
+        # Selección para Staffing
+        opciones_staff = []
+        if 'fp' in st.session_state: opciones_staff.append("Prophet")
+        if 'fs' in st.session_state: opciones_staff.append("SARIMA")
+        
+        modelo_final = st.selectbox("Usar para Staffing:", opciones_staff)
+        if st.button("Confirmar y Calcular Staffing ➡️"):
+            st.session_state.current_forecast = st.session_state.fp if modelo_final == "Prophet" else st.session_state.fs
             st.session_state.step = 3
             st.rerun()
 
 # --- PASO 3: STAFFING (Jerárquico) ---
 elif st.session_state.step == 3:
-    st.header("3️⃣ Staffing Final")
+    st.header("3️⃣ Staffing y Vistas Jerárquicas")
     vision = st.radio("Detalle:", ["Mensual", "Semanal", "Diario"], horizontal=True)
+    
     res_wfm = get_staffing_requirements(st.session_state.current_forecast, st.session_state.aht_val, sl, st.session_state.shr_val)
-    # Lógica de agrupación de tablas y gráficos por jerarquía...
-    st.download_button("📥 Descargar Plan", res_wfm.to_csv().encode('utf-8'))
+    st.dataframe(res_wfm.head(100)) # Vista rápida
+    st.download_button("📥 Descargar Plan Maestro", res_wfm.to_csv(index=False).encode('utf-8'), "plan_wfm.csv")
