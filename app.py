@@ -111,15 +111,16 @@ elif st.session_state.step == 2:
         real_overlap = df[(df['ds'] >= f_start) & (df['ds'] <= f_end)]
         fig = go.Figure()
         
-        if not real_overlap.empty:
-            from sklearn.metrics import mean_absolute_percentage_error
-            eval_df = real_overlap.merge(forecast, on='ds')
-            if not eval_df.empty:
-                mape = mean_absolute_percentage_error(eval_df['y'], eval_df['yhat'])
-                st.metric("🎯 Precisión (MAPE)", f"{mape:.2%}")
-                fig.add_vrect(x0=eval_df['ds'].min(), x1=eval_df['ds'].max(), 
-                             fillcolor="rgba(173, 216, 230, 0.3)", layer="below", line_width=0,
-                             annotation_text="Zona de Validación") #
+if not real_overlap.empty:
+    # El sombreado (vrect) solo aparece si hay datos reales para comparar.
+    fig.add_vrect(
+        x0=real_overlap['ds'].min(), 
+        x1=real_overlap['ds'].max(),
+        fillcolor="rgba(173, 216, 230, 0.3)", 
+        layer="below", 
+        line_width=0,
+        annotation_text="Área de Auditoría MAPE"
+    )
 
         fig.add_trace(go.Scatter(x=df['ds'], y=df['y'], name='Histórico (Azul)', line=dict(color='#4682B4'))) #
         fig.add_trace(go.Scatter(x=forecast['ds'], y=forecast['yhat'], name='Forecast (Naranja)', line=dict(color='#FF8C00', dash='dot'))) #
