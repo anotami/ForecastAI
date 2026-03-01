@@ -1,36 +1,33 @@
 import math
 import pandas as pd
 
-def calculate_erlang_c(calls, aht, interval_min=30, target_sl=0.8, target_time=20):
-    """
-    Calcula agentes requeridos para un intervalo.
-    calls: Volumen proyectado
-    aht: Average Handle Time en segundos
-    interval_min: Duración del intervalo (30 min)
-    """
+def erlang_c_probability(intensity, agents):
+    if agents <= intensity: return 1.0
+    utilization = intensity / agents
+    sum_term = sum([(intensity**i) / math.factorial(i) for i in range(agents)])
+    queue_term = (intensity**agents / (math.factorial(agents) * (1 - utilization)))
+    return queue_term / (sum_term + queue_term)
+
+def calculate_required_agents(calls, aht, interval_min=30, target_sl=0.8, target_time=20):
     if calls <= 0: return 0
-    
-    # Intensidad de tráfico (Erlangs)
     intensity = (calls * aht) / (interval_min * 60)
-    
-    # Estimación inicial de agentes (siempre > intensidad)
     agents = math.ceil(intensity) + 1
-    
-    # Lógica simplificada de Erlang C para encontrar el mínimo de agentes 
-    # que cumplen con el Target Service Level (TSL)
     while True:
-        # (Aquí iría la función probabilística completa de Erlang C)
-        # Por propósitos de la herramienta, usaremos una aproximación lineal segura:
-        occupancy = intensity / agents
-        if occupancy < 0.85: # Evitamos burnout manteniendo ocupación < 85%
-            break
+        if agents > 500: break
+        utilization = intensity / agents
+        if utilization >= 1:
+            agents += 1
+            continue
+        prob_wait = erlang_c_probability(intensity, agents)
+        service_level = 1 - (prob_wait * math.exp(-(agents - intensity) * (target_time / aht)))
+        if service_level >= target_sl: break
         agents += 1
-        
     return agents
 
-def get_staffing_requirements(df_forecast, aht=300, target_sl=0.8):
-    """Aplica Erlang C a todo el dataframe de predicción"""
-    df_forecast['agentes_req'] = df_forecast['yhat'].apply(
-        lambda x: calculate_erlang_c(x, aht)
+def get_staffing_requirements(df_forecast, aht, target_sl, shrinkage):
+    # Forzamos los cálculos para evitar el TypeError
+    df_forecast['agentes_netos'] = df_forecast['yhat'].apply(
+        lambda x: calculate_required_agents(x, aht, target_sl=target_sl)
     )
+    df_forecast['agentes_nominales'] = (df_forecast['agentes_netos'] / (1 - shrinkage)).apply(math.ceil)
     return df_forecast
