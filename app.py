@@ -44,29 +44,26 @@ if data is not None:
         if st.button("Validar Meses y Continuar"):
             st.success("Volumen mensual validado.")
 
-    # --- PASO 2: FORECAST DIARIO (DISTRIBUCIÓN) ---
-    st.header("Paso 2: Pronóstico Diario (Day-of-Week)")
-    with st.expander("Ver Análisis Diario"):
-        df_daily = df_pcrc.set_index('ds').resample('D').sum().reset_index()
-        st.bar_chart(df_daily.tail(30).set_index('ds')['y'])
-        st.info("Aquí se observan los picos de lunes y bajas de fin de semana.")
-        if st.button("Validar Días y Continuar"):
-            st.success("Distribución diaria validada.")
+# --- PASO 2: DIARIO ---
+st.header("Paso 2: Pronóstico Diario (Day-of-Week)")
+with st.expander("Ver Análisis Diario"):
+    # Resumen por día de la semana para validar 100/70/30
+    df_daily = df_pcrc.copy()
+    df_daily['dia_nombre'] = df_daily['ds'].dt.day_name()
+    order = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
+    resumen_semanal = df_daily.groupby('dia_nombre')['y'].mean().reindex(order)
+    st.bar_chart(resumen_semanal)
+    st.caption("Validación: Lunes-Viernes (Pico), Sábado (70%), Domingo (30%)")
 
-    # --- PASO 3: FORECAST POR INTERVALO (MICRO) ---
-    st.header("Paso 3: Pronóstico por Intervalo (30 min)")
-    with st.expander("Ejecutar Forecast de Detalle"):
-        col1, col2 = st.columns(2)
-        f_ini = col1.date_input("Desde", df_pcrc['ds'].max().date())
-        f_fin = col2.date_input("Hasta", df_pcrc['ds'].max().date() + pd.Timedelta(days=7))
-        
-        if st.button("Ejecutar Forecast Detallado"):
-            periodos = ((f_fin - f_ini).days + 1) * 48
-            with st.spinner("Calculando curvas de llegada..."):
-                forecast = run_prophet(df_pcrc, periodos)
-                forecast['yhat'] = forecast['yhat'].clip(lower=0).round().astype(int)
-                st.session_state.current_forecast = forecast
-                st.line_chart(forecast.head(336).set_index('ds')['yhat'])
+# --- PASO 3: INTERVALO ---
+st.header("Paso 3: Pronóstico por Intervalo (30 min)")
+with st.expander("Ejecutar Forecast de Detalle"):
+    # ... (código anterior de Prophet) ...
+    if 'current_forecast' in st.session_state:
+        # Mostrar un solo día para ver la "Doble Joroba" claramente
+        st.subheader("Curva de Llegada (Doble Joroba)")
+        un_dia = st.session_state.current_forecast.head(48)
+        st.line_chart(un_dia.set_index('ds')['yhat'])
 
     # --- PASO 4: STAFFING (FINAL) ---
     st.header("Paso 4: Dimensionamiento de Personal")
