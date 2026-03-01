@@ -1,3 +1,9 @@
+import os
+import sys
+
+# Esto obliga a Python a buscar módulos en la carpeta raíz del proyecto
+sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+
 import streamlit as st
 from modules.data_loader import load_data
 from modules.models import run_prophet, run_sarima
