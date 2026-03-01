@@ -3,6 +3,7 @@ import pandas as pd
 import sys
 import os
 import plotly.graph_objects as go
+from datetime import datetime, timedelta
 from sklearn.metrics import mean_absolute_percentage_error
 
 # Configuración de rutas
@@ -51,19 +52,28 @@ with st.sidebar:
 
 st.title("🚀 Planificación BPO en Cascada")
 
-# --- PASO 1: INGESTA CON CONFIGURACIÓN DE SIMULACIÓN ---
+# --- PASO 1: INGESTA PERSONALIZADA ---
 if st.session_state.step == 1:
-    st.header("1️⃣ Ingesta de Información")
+    st.header("1️⃣ Configuración de Datos Históricos")
     fuente = st.radio("Origen de datos:", ["Simulación Aleatoria", "Subir Archivo CSV"])
     
     if fuente == "Simulación Aleatoria":
-        st.info("Configura el periodo de tiempo histórico que deseas simular.")
-        dias_sim = st.number_input("Días de histórico a generar:", min_value=30, max_value=730, value=180)
-        # Nota: La función load_data en modules/data_loader debe aceptar este parámetro
-        if st.button("Generar Datos de Simulación ➡️"):
-            with st.spinner("Creando universo de datos..."):
-                # Pasamos los días elegidos a la función de carga
-                st.session_state.data = load_data(fuente, dias_hist=dias_sim)
+        st.info("Configura el nombre del servicio y el periodo de simulación.")
+        
+        # Nombre del PCRC
+        nombre_pcrc = st.text_input("Nombre del PCRC / Skill:", value="SERVICIO 1")
+        
+        col_s1, col_s2 = st.columns(2)
+        fecha_fin_sim = col_s1.date_input("Fecha final del histórico:", datetime.now().date())
+        dias_hist = col_s2.number_input("Días hacia atrás para generar:", min_value=30, max_value=730, value=180)
+        
+        fecha_inicio_sim = fecha_fin_sim - timedelta(days=dias_hist)
+        st.caption(f"Generando datos para **{nombre_pcrc}** desde **{fecha_inicio_sim}** hasta **{fecha_fin_sim}**.")
+
+        if st.button("Generar Histórico Simulado ➡️"):
+            with st.spinner("Construyendo universo de datos..."):
+                # Pasamos los parámetros a la función de carga
+                st.session_state.data = load_data(fuente, fecha_fin=fecha_fin_sim, dias=dias_hist, nombre_pcrc=nombre_pcrc)
                 st.session_state.step = 2
                 st.rerun()
     
@@ -75,19 +85,24 @@ if st.session_state.step == 1:
                 st.session_state.step = 2
                 st.rerun()
 
-# --- PASO 2: FORECAST & BACKTESTING ---
+# --- PASO 2: FORECAST & INDICADORES ---
 elif st.session_state.step == 2:
     st.header("2️⃣ Pronóstico e Indicadores de Precisión")
     df = st.session_state.data
     df['ds'] = pd.to_datetime(df['ds'])
     
+    # Identificamos el nombre del servicio cargado
+    pcrc_actual = df['pcrc'].unique()[0]
+    st.write(f"Analizando: **{pcrc_actual}**")
+    st.write(f"Ventana histórica: **{df['ds'].min().date()}** al **{df['ds'].max().date()}**")
+    
     col_f1, col_f2 = st.columns(2)
     f_ini = col_f1.date_input("Inicio del Pronóstico", df['ds'].max().date())
     f_fin = col_f2.date_input("Fin del Pronóstico", df['ds'].max().date() + pd.Timedelta(days=7))
     
-    if st.button("🚀 Generar Pronóstico"):
+    if st.button("🚀 Generar Pronóstico Unificado"):
         dias_forecast = (f_fin - f_ini).days + 1
-        with st.spinner("Entrenando modelos..."):
+        with st.spinner("Entrenando modelos Prophet..."):
             forecast = run_prophet(df, dias_forecast * 48)
             forecast['yhat'] = forecast['yhat'].clip(lower=0).round().astype(int)
             st.session_state.current_forecast = forecast
@@ -97,42 +112,39 @@ elif st.session_state.step == 2:
         forecast = st.session_state.current_forecast
         f_start, f_end = st.session_state.f_range
         
-        # Lógica de MAPE para Backtesting
+        # Métrica de Precisión (Backtesting)
         real_overlap = df[(df['ds'] >= f_start) & (df['ds'] <= f_end)]
         if not real_overlap.empty:
             eval_df = real_overlap.merge(forecast, on='ds')
             if not eval_df.empty:
                 mape = mean_absolute_percentage_error(eval_df['y'], eval_df['yhat'])
-                st.metric("🎯 Precisión: MAPE", f"{mape:.2%}")
+                st.metric("🎯 Precisión (MAPE)", f"{mape:.2%}")
 
-        # Gráfico Unificado (Azul: Real, Naranja: Pronóstico)
+        # Gráfico Unificado
         fig = go.Figure()
-        fig.add_trace(go.Scatter(x=df['ds'], y=df['y'], name='Dato Real (Azul)', line=dict(color='#4682B4')))
-        fig.add_trace(go.Scatter(x=forecast['ds'], y=forecast['yhat'], name='Pronóstico (Naranja)', line=dict(color='#FF8C00', dash='dot')))
+        fig.add_trace(go.Scatter(x=df['ds'], y=df['y'], name='Histórico (Real)', line=dict(color='#4682B4')))
+        fig.add_trace(go.Scatter(x=forecast['ds'], y=forecast['yhat'], name='Pronóstico (AI)', line=dict(color='#FF8C00', dash='dot')))
         st.plotly_chart(fig, use_container_width=True)
         
         c_n1, c_n2 = st.columns(2)
         if c_n1.button("⬅️ Atrás"): st.session_state.step = 1; st.rerun()
-        if c_n2.button("Calcular Staffing ➡️"): st.session_state.step = 3; st.rerun()
+        if c_n2.button("Calcular Staffing Final ➡️"): st.session_state.step = 3; st.rerun()
 
 # --- PASO 3: STAFFING TOTAL ---
 elif st.session_state.step == 3:
     st.header("3️⃣ Dimensionamiento Final (Staffing)")
     forecast = st.session_state.current_forecast
     df_hist = st.session_state.data
+    pcrc_label = df_hist['pcrc'].unique()[0]
     
     res_wfm = get_staffing_requirements(forecast, aht, sl, shrinkage)
     
     # Gráfico Maestro
     fig_master = go.Figure()
-    fig_master.add_trace(go.Scatter(x=df_hist['ds'], y=df_hist['y'], name='Pasado (Real)', line=dict(color='#4682B4', width=1)))
-    fig_master.add_trace(go.Scatter(x=res_wfm['ds'], y=res_wfm['yhat'], name='Futuro (Llamadas)', line=dict(color='#FF8C00')))
-    fig_master.add_trace(go.Scatter(x=res_wfm['ds'], y=res_wfm['agentes_nominales'], name='Staffing (Verde)', line=dict(color='#2E8B57', width=3)))
-    
+    fig_master.add_trace(go.Scatter(x=df_hist['ds'], y=df_hist['y'], name='Histórico Real', line=dict(color='#4682B4', width=1)))
+    fig_master.add_trace(go.Scatter(x=res_wfm['ds'], y=res_wfm['yhat'], name='Pronóstico Llamadas', line=dict(color='#FF8C00')))
+    fig_master.add_trace(go.Scatter(x=res_wfm['ds'], y=res_wfm['agentes_nominales'], name='Staffing (Agentes)', line=dict(color='#2E8B57', width=3)))
     st.plotly_chart(fig_master, use_container_width=True)
     
-    # Exportación
-    csv = res_wfm.to_csv(index=False).encode('utf-8')
-    st.download_button("📥 Descargar Plan Maestro CSV", csv, "plan_wfm.csv", "text/csv")
-    
-    if st.button("⬅️ Volver a Pronóstico"): st.session_state.step = 2; st.rerun()
+    st.download_button(f"📥 Exportar Plan {pcrc_label}", res_wfm.to_csv(index=False).encode('utf-8'), f"plan_{pcrc_label}.csv", "text/csv")
+    if st.button("⬅️ Volver"): st.session_state.step = 2; st.rerun()
