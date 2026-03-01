@@ -1,16 +1,18 @@
-import numpy as np
-from sklearn.metrics import mean_absolute_percentage_error, mean_squared_error
+import pandas as pd
+import plotly.express as px
 
-def calculate_metrics(y_true, y_pred):
-    """Calcula el error del pronóstico"""
-    mape = mean_absolute_percentage_error(y_true, y_pred)
-    rmse = np.sqrt(mean_squared_error(y_true, y_pred))
+def get_error_heatmap(df_result):
+    # df_result debe tener 'ds', 'y_real', 'yhat'
+    df_result['hora'] = df_result['ds'].dt.hour
+    df_result['dia_semana'] = df_result['ds'].dt.day_name()
+    df_result['error_abs'] = abs(df_result['yhat'] - df_result['y_real'])
     
-    # El Bias nos dice si estamos sobre-pronosticando o sub-pronosticando
-    bias = np.sum(y_pred - y_true) / np.sum(y_true)
+    # Pivot para el heatmap
+    pivot = df_result.groupby(['dia_semana', 'hora'])['error_abs'].mean().unstack()
+    # Ordenar días
+    dias = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
+    pivot = pivot.reindex(dias)
     
-    return {
-        "MAPE": f"{mape:.2%}",
-        "RMSE": round(rmse, 2),
-        "BIAS": f"{bias:.2%}"
-    }
+    fig = px.imshow(pivot, labels=dict(x="Hora del Día", y="Día", color="Error Absoluto"),
+                    title="Mapa de Calor: ¿Dónde falla más el modelo?")
+    return fig
