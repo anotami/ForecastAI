@@ -65,4 +65,6 @@ def run_sarima(df, periods):
             'yhat_upper': conf_int.iloc[:, 1].values
         })
     except Exception as e:
-        # En caso de error por falta de datos o convergencia, devolsi
+        # En caso de error por falta de datos o convergencia, devolvemos un DF vacío o error
+        print(f"Error en SARIMA: {e}")
+        return pd.DataFrame()
