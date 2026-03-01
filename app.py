@@ -1,6 +1,6 @@
 import streamlit as st
 from modules.data_loader import load_data
-from modules.forecasting import run_prophet, run_sarima
+from modules.models import run_prophet, run_sarima
 from modules.staffing import get_staffing_requirements
 from modules.validator import get_error_heatmap
 
