@@ -17,13 +17,14 @@ def load_data(fuente, archivo=None, fecha_fin=None, dias=180, nombre_pcrc="SERVI
     
     # Factores de distribución (Doble Joroba)
     def get_factors(ds):
+        noise = np.random.normal(0, 15, len(df))
         wd = ds.weekday()
         w_factor = 1.0 if wd < 5 else (0.7 if wd == 5 else 0.3)
         hour = ds.hour + ds.minute/60
         h_factor = np.exp(-0.5 * ((hour - 10.5) / 2)**2) + 0.8 * np.exp(-0.5 * ((hour - 16.0) / 2)**2) + 0.05
         return w_factor * h_factor
 
-    df['y'] = df['ds'].apply(get_factors) * 60 + np.random.normal(0, 5, len(df))
+    df['y'] = (base_volume * df['weekday_factor'] * df['interval_factor'] + noise)
     df['y'] = df['y'].clip(lower=0).round().astype(int)
     df['pcrc'] = nombre_pcrc
     
