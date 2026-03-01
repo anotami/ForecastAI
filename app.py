@@ -16,18 +16,49 @@ except ImportError as e:
 
 st.set_page_config(layout="wide", page_title="WFM Cascada Engine")
 
-# --- SIDEBAR PERSISTENTE ---
+# --- SIDEBAR PERSISTENTE CON BOTONES DE AJUSTE RÁPIDO ---
 with st.sidebar:
     st.image("https://img.freepik.com/free-vector/data-report-concept-illustration_114360-883.jpg")
     st.title("⚙️ Configuración WFM")
+    
     fuente = st.radio("Origen de Datos", ["Simulación Aleatoria", "Subir Archivo"])
     st.markdown("---")
+    
     st.header("Parámetros Staffing")
-    aht = st.number_input("AHT (Seg)", value=300)
-    sl = st.slider("Target SL (%)", 0.5, 0.99, 0.8)
-    shrinkage = st.slider("Shrinkage (%)", 0.0, 0.5, 0.3)
 
-st.title("🚀 Planificación WFM en Cascada")
+    # 1. Lógica para TMO (AHT)
+    if 'aht_val' not in st.session_state:
+        st.session_state.aht_val = 300.0
+
+    col1, col2 = st.columns(2)
+    if col1.button("-10% TMO"):
+        st.session_state.aht_val *= 0.9
+    if col2.button("+10% TMO"):
+        st.session_state.aht_val *= 1.1
+
+    aht = st.number_input("TMO / AHT (Seg)", value=float(st.session_state.aht_val), key="aht_input")
+    # Sincronizar por si el usuario escribe manualmente
+    st.session_state.aht_val = aht
+
+    st.markdown("---")
+
+    # 2. Lógica para Shrinkage
+    if 'shr_val' not in st.session_state:
+        st.session_state.shr_val = 0.30
+
+    col3, col4 = st.columns(2)
+    if col3.button("-10% Shrink"):
+        # Reduce un 10% del valor actual (ej: de 30% a 27%)
+        st.session_state.shr_val = max(0.0, st.session_state.shr_val * 0.9)
+    if col4.button("+10% Shrink"):
+        st.session_state.shr_val = min(1.0, st.session_state.shr_val * 1.1)
+
+    shrinkage = st.slider("Shrinkage Total (%)", 0.0, 0.9, float(st.session_state.shr_val), step=0.01)
+    # Sincronizar por si el usuario mueve el slider
+    st.session_state.shr_val = shrinkage
+
+    st.markdown("---")
+    sl = st.slider("Target SL (%)", 0.5, 0.99, 0.8)
 
 # CARGA INICIAL
 data = load_data(fuente)
