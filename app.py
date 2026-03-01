@@ -1,48 +1,72 @@
 import streamlit as st
-from modules.data_loader import get_data
+from modules.data_loader import load_data
 from modules.models import run_prophet, run_sarima
-from modules.validator import calculate_metrics
+from modules.validator import calculate_metrics, get_error_heatmap
 
-st.set_page_config(layout="wide", page_title="Forecast BPO")
+st.set_page_config(layout="wide", page_title="Forecast Master BPO")
 
-# Carga masiva de datos (Simulación de 180 días)
-if 'df' not in st.session_state:
-    st.session_state.df = get_data(is_simulation=True)
+st.title("📞 BPO Forecasting & Precision Tool")
 
-df = st.session_state.df
-
-# --- INTERFAZ ---
-st.title("🚀 Engine de Pronósticos 30-min")
-
+# --- SIDEBAR: FUENTE DE DATOS ---
 with st.sidebar:
-    pcrc = st.selectbox("Seleccionar PCRC", df['pcrc'].unique())
-    modelo = st.radio("Elegir Modelo", ["Prophet", "SARIMA"])
-    dias = st.slider("Días a predecir", 1, 14, 7)
-
-# Filtrado por PCRC
-df_pcrc = df[df['pcrc'] == pcrc].copy()
-
-if st.button("Ejecutar Pronóstico Masivo"):
-    # Separamos últimos 2 días para validar
-    train = df_pcrc.iloc[:-96] # 48*2 = 96 intervalos
-    test = df_pcrc.iloc[-96:]
+    st.header("1. Configuración de Datos")
+    fuente = st.radio("Fuente de datos:", ["Simulación Aleatoria", "Subir Archivo (CSV/Excel)"])
     
-    with st.spinner('Entrenando modelo...'):
-        if modelo == "Prophet":
-            res = run_prophet(train, dias * 48)
-        else:
-            res = run_sarima(train, dias * 48)
+    uploaded_file = None
+    if fuente == "Subir Archivo (CSV/Excel)":
+        uploaded_file = st.file_uploader("Formato: [fecha, llamadas, pcrc]", type=['csv', 'xlsx'])
+        st.info("💡 La fecha debe estar en intervalos de 30 min.")
+
+    st.header("2. Parámetros de Pronóstico")
+    modelo_choice = st.selectbox("Modelo", ["Prophet", "SARIMA"])
+    horizonte = st.selectbox("Horizonte de tiempo", ["1 Día", "1 Semana", "1 Mes"])
+    
+    # Mapeo de periodos (intervalos de 30 min)
+    mapeo_periodos = {"1 Día": 48, "1 Semana": 336, "1 Mes": 1440}
+    periodos = mapeo_periodos[horizonte]
+
+# --- PROCESAMIENTO ---
+data = load_data(fuente, uploaded_file)
+
+if data is not None:
+    pcrc_lista = data['pcrc'].unique()
+    pcrc_selected = st.selectbox("Selecciona PCRC para el Forecast", pcrc_lista)
+    
+    df_pcrc = data[data['pcrc'] == pcrc_selected].copy()
+    
+    if st.button("🚀 Ejecutar Forecast Masivo"):
+        # Split para validación (usamos los últimos 2 días para el heatmap)
+        train = df_pcrc.iloc[:-96]
+        actuals = df_pcrc.iloc[-96:] 
+
+        with st.spinner('Entrenando y proyectando...'):
+            if modelo_choice == "Prophet":
+                forecast = run_prophet(train, periodos)
+            else:
+                forecast = run_sarima(train, periodos)
             
-        # 1. Mostrar Métricas
-        # Comparamos la predicción contra el 'test' (lo que realmente pasó)
-        # Nota: Ajustar índices para que coincidan en tiempo
-        metrics = calculate_metrics(test['y'], res['yhat'].iloc[:96])
-        
-        c1, c2, c3 = st.columns(3)
-        c1.metric("Precisión (MAPE)", metrics["MAPE"])
-        c2.metric("Desviación (RMSE)", metrics["RMSE"])
-        c3.metric("Sesgo (BIAS)", metrics["BIAS"])
-        
-        # 2. Gráfico
-        st.subheader(f"Proyección de llamadas - {pcrc}")
-        st.line_chart(res.set_index('ds')[['yhat']])
+            # --- DASHBOARD DE RESULTADOS ---
+            tab1, tab2 = st.tabs(["📈 Pronóstico e Intervalos", "🎯 Análisis de Precisión"])
+            
+            with tab1:
+                st.subheader(f"Proyección {horizonte} - {pcrc_selected}")
+                # Gráfico principal con intervalos
+                st.line_chart(forecast.set_index('ds')[['yhat', 'yhat_lower', 'yhat_upper']])
+                st.dataframe(forecast)
+
+            with tab2:
+                # Unir predicción con datos reales de test para el heatmap
+                val_df = actuals.merge(forecast, on='ds', suffixes=('_real', '_pred'))
+                val_df = val_df.rename(columns={'y': 'y_real'})
+                
+                col_m1, col_m2 = st.columns(2)
+                metrics = calculate_metrics(val_df['y_real'], val_df['yhat'])
+                col_m1.metric("MAPE (Precisión General)", metrics["MAPE"])
+                col_m2.metric("Sesgo (Over/Under forecast)", metrics["BIAS"])
+                
+                # Mostrar Heatmap de error
+                fig_heat = get_error_heatmap(val_df)
+                st.plotly_chart(fig_heat, use_container_width=True)
+
+else:
+    st.warning("Por favor, sube un archivo o selecciona simulación para comenzar.")
