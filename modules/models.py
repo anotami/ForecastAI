@@ -3,12 +3,13 @@ from prophet import Prophet
 from statsmodels.tsa.statespace.sarimax import SARIMAX
 
 def run_prophet(df, periods):
-    # Aumentamos changepoint_prior_scale de 0.05 (default) a 0.5 para dar flexibilidad
-    # Añadimos estacionalidad aditiva para que las jorobas no sean siempre idénticas
+    # Aumentamos changepoint_prior_scale de 0.05 a 0.5 para máxima flexibilidad
+    # Ajustamos seasonality_prior_scale para que aprenda mejor los picos diarios
     m = Prophet(
         daily_seasonality=True, 
         weekly_seasonality=True,
         changepoint_prior_scale=0.5, 
+        seasonality_prior_scale=10.0,
         seasonality_mode='additive'
     )
     m.fit(df[['ds', 'y']])
