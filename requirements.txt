@@ -1,7 +1,7 @@
 streamlit
-pandas
-numpy
 prophet
 statsmodels
+pandas
+numpy
 plotly
 scikit-learn
