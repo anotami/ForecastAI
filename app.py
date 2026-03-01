@@ -85,55 +85,83 @@ if st.session_state.step == 1:
             st.session_state.step = 2
             st.rerun()
 
-# --- PASO 2: FORECAST & COMPARATIVA ---
+# --- PASO 2: FORECAST MULTI-MODELO ---
 elif st.session_state.step == 2:
-    st.header("2️⃣ Pronóstico: Prophet vs SARIMA")
+    st.header("2️⃣ Comparativa de Pronósticos: Prophet vs SARIMA")
     df = st.session_state.data
     df['ds'] = pd.to_datetime(df['ds'])
     
     col_f1, col_f2 = st.columns(2)
+    # Fechas por defecto solicitadas
     f_ini = col_f1.date_input("Inicio del Pronóstico", datetime(2025, 11, 1).date())
     f_fin = col_f2.date_input("Fin del Pronóstico", datetime(2026, 3, 1).date())
     
-    modelo_sel = st.selectbox("Selecciona Algoritmo:", ["Prophet (AI)", "SARIMA (Estadístico)"])
-    
-    if st.button("🚀 Ejecutar Modelo"):
-        dias_forecast = (pd.to_datetime(f_fin).date() - df['ds'].min().date()).days
-        with st.spinner(f"Calculando con {modelo_sel}..."):
-            if modelo_sel == "Prophet (AI)":
-                forecast_res = run_prophet(df, dias_forecast * 48)
-            else:
-                forecast_res = run_sarima(df, dias_forecast * 48)
+    if st.button("🚀 Ejecutar Modelos"):
+        # Calculamos periodos necesarios
+        fecha_ref = min(df['ds'].min().date(), f_ini)
+        dias_forecast = (pd.to_datetime(f_fin).date() - fecha_ref).days
+        
+        with st.spinner("Procesando modelos... esto puede tardar unos segundos"):
+            # Ejecución Dual
+            f_prophet = run_prophet(df, dias_forecast * 48)
+            f_sarima = run_sarima(df, dias_forecast * 48)
             
-            # Filtro estricto al rango pedido
-            mask = (forecast_res['ds'] >= pd.to_datetime(f_ini)) & (forecast_res['ds'] <= pd.to_datetime(f_fin))
-            st.session_state.current_forecast = forecast_res.loc[mask].copy()
+            # Filtrado estricto
+            mask_p = (f_prophet['ds'] >= pd.to_datetime(f_ini)) & (f_prophet['ds'] <= pd.to_datetime(f_fin))
+            mask_s = (f_sarima['ds'] >= pd.to_datetime(f_ini)) & (f_sarima['ds'] <= pd.to_datetime(f_fin))
+            
+            st.session_state.forecast_p = f_prophet.loc[mask_p].copy()
+            st.session_state.forecast_s = f_sarima.loc[mask_s].copy()
             st.session_state.f_range = (pd.to_datetime(f_ini), pd.to_datetime(f_fin))
 
-    if 'current_forecast' in st.session_state:
-        forecast = st.session_state.current_forecast
+    if 'forecast_p' in st.session_state:
+        fp = st.session_state.forecast_p
+        fs = st.session_state.forecast_s
         f_start, f_end = st.session_state.f_range
         
-        # Auditoría de Precisión (MAPE)
+        # --- MÉTRICAS COMPARATIVAS (MAPE) ---
         real_overlap = df[(df['ds'] >= f_start) & (df['ds'] <= f_end)]
+        
+        col_m1, col_m2 = st.columns(2)
+        if not real_overlap.empty:
+            from sklearn.metrics import mean_absolute_percentage_error
+            # MAPE Prophet
+            eval_p = real_overlap.merge(fp, on='ds')
+            mape_p = mean_absolute_percentage_error(eval_p['y'], eval_p['yhat'])
+            col_m1.metric("🎯 MAPE Prophet (Naranja)", f"{mape_p:.2%}")
+            
+            # MAPE SARIMA
+            eval_s = real_overlap.merge(fs, on='ds')
+            mape_s = mean_absolute_percentage_error(eval_s['y'], eval_s['yhat'])
+            col_m2.metric("🎯 MAPE SARIMA (Verde)", f"{mape_s:.2%}")
+
+        # --- GRÁFICO COMPARATIVO ---
         fig = go.Figure()
         
-        if not real_overlap.empty:
-            eval_df = real_overlap.merge(forecast, on='ds')
-            if not eval_df.empty:
-                from sklearn.metrics import mean_absolute_percentage_error
-                mape = mean_absolute_percentage_error(eval_df['y'], eval_df['yhat'])
-                st.metric(f"🎯 Precisión {modelo_sel}", f"{mape:.2%}")
-                
-                # Sombreado de Backtesting
-                fig.add_vrect(x0=eval_df['ds'].min(), x1=eval_df['ds'].max(), 
-                             fillcolor="rgba(255, 165, 0, 0.2)", layer="below", line_width=0)
+        # 1. Real (Azul)
+        fig.add_trace(go.Scatter(x=df['ds'], y=df['y'], name='Histórico Real', line=dict(color='#4682B4', width=1)))
+        
+        # 2. Prophet (Naranja)
+        fig.add_trace(go.Scatter(x=fp['ds'], y=fp['yhat'], name='Prophet (AI)', line=dict(color='#FF8C00', dash='dot')))
+        
+        # 3. SARIMA (Verde)
+        fig.add_trace(go.Scatter(x=fs['ds'], y=fs['yhat'], name='SARIMA (Stats)', line=dict(color='#2E8B57', dash='dash')))
 
-        # Gráfico Unificado
-        fig.add_trace(go.Scatter(x=df['ds'], y=df['y'], name='Real', line=dict(color='#4682B4')))
-        fig.add_trace(go.Scatter(x=forecast['ds'], y=forecast['yhat'], name=f'Predicción {modelo_sel}', line=dict(color='#FF8C00', dash='dot')))
-        fig.update_xaxes(range=[df['ds'].min(), f_end])
+        # Sombreado de validación
+        if not real_overlap.empty:
+            fig.add_vrect(x0=real_overlap['ds'].min(), x1=real_overlap['ds'].max(), 
+                         fillcolor="rgba(200, 200, 200, 0.2)", layer="below", line_width=0)
+
+        fig.update_xaxes(range=[min(df['ds'].min(), f_start), f_end])
         st.plotly_chart(fig, use_container_width=True)
+        
+        # Selección de modelo para el siguiente paso
+        modelo_final = st.radio("¿Qué modelo usar para el Staffing?", ["Prophet", "SARIMA"], horizontal=True)
+        
+        if st.button("Confirmar y Calcular Staffing ➡️"):
+            st.session_state.current_forecast = fp if modelo_final == "Prophet" else fs
+            st.session_state.step = 3
+            st.rerun()
 
 # --- PASO 3: STAFFING JERÁRQUICO ---
 elif st.session_state.step == 3:
