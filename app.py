@@ -132,6 +132,77 @@ elif st.session_state.step == 3:
         if c_c1.button("⬅️ Atrás"): st.session_state.step = 2; st.rerun()
         if c_c2.button("Calcular Staffing ➡️"): st.session_state.step = 4; st.rerun()
 
+# --- PASO 5 (o sección de resultados en Paso 4) ---
+if 'current_forecast' in st.session_state:
+    st.header("📊 Análisis de Capacidad y Demanda")
+    
+    # 1. Selector de Visión Jerárquica
+    vision = st.radio(
+        "Selecciona el nivel de detalle:",
+        ["Mensual (Ver Semanas)", "Semanal (Ver Días)", "Diario (Ver Intervalos)"],
+        horizontal=True
+    )
+    
+    # Procesar Staffing base
+    res_wfm = get_staffing_requirements(
+        st.session_state.current_forecast, 
+        st.session_state.aht_val, 
+        sl, 
+        st.session_state.shr_val
+    )
+    df_viz = res_wfm.copy()
+    df_viz['ds'] = pd.to_datetime(df_viz['ds'])
+
+    # 2. Lógica de Agrupación por Jerarquía
+    if "Mensual" in vision:
+        st.subheader("📅 Vista Mensual: Desglose por Semanas")
+        # Agrupamos por semana (W)
+        df_plot = df_viz.set_index('ds').resample('W').agg({
+            'yhat': 'sum', 
+            'agentes_netos': 'max', 
+            'agentes_nominales': 'max'
+        }).reset_index()
+        
+    elif "Semanal" in vision:
+        st.subheader("📅 Vista Semanal: Desglose por Días")
+        # Agrupamos por día (D) y ordenamos de Lun a Dom
+        df_plot = df_viz.set_index('ds').resample('D').agg({
+            'yhat': 'sum', 
+            'agentes_netos': 'max', 
+            'agentes_nominales': 'max'
+        }).reset_index()
+        
+        # Ordenar días correctamente
+        df_plot['dia_nombre'] = df_plot['ds'].dt.day_name()
+        dias_orden = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
+        df_plot['dia_nombre'] = pd.Categorical(df_plot['dia_nombre'], categories=dias_orden, ordered=True)
+        df_plot = df_plot.sort_values('ds') # Mantiene orden cronológico en el gráfico
+
+    else: # Vista Diaria por Intervalo
+        st.subheader("🕒 Vista Diaria: Detalle por Intervalo (30 min)")
+        # Permitir elegir qué día específico ver del forecast
+        dias_disponibles = df_viz['ds'].dt.date.unique()
+        dia_interes = st.selectbox("Selecciona el día a inspeccionar:", dias_disponibles)
+        df_plot = df_viz[df_viz['ds'].dt.date == dia_interes]
+
+    # 3. Renderizado de Gráficos con Colores Corporativos
+    import plotly.graph_objects as go
+    
+    fig = go.Figure()
+    # Volumen en Naranja
+    fig.add_trace(go.Scatter(x=df_plot['ds'], y=df_plot['yhat'], name='Llamadas', line=dict(color='#FF8C00')))
+    # Staffing en Verde
+    fig.add_trace(go.Scatter(x=df_plot['ds'], y=df_plot['agentes_nominales'], name='Staffing', line=dict(color='#2E8B57', width=3)))
+    
+    st.plotly_chart(fig, use_container_width=True)
+
+    # 4. Tabla de Datos y Exportación
+    with st.expander("Ver tabla de resumen"):
+        st.dataframe(df_plot)
+        csv = df_plot.to_csv(index=False).encode('utf-8')
+        st.download_button(f"📥 Descargar Vista {vision}", csv, f"WFM_{vision}.csv", "text/csv")
+
+
 # PASO 4: STAFFING (ERLANG C)
 elif st.session_state.step == 4:
     st.header("4️⃣ Staffing y Dimensionamiento")
