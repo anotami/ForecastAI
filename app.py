@@ -105,28 +105,59 @@ elif st.session_state.step == 2:
     if c_b1.button("⬅️ Atrás"): st.session_state.step = 1; st.rerun()
     if c_b2.button("Ir al Pronóstico ➡️"): st.session_state.step = 3; st.rerun()
 
-# PASO 3: FORECAST (PROPHET)
+# --- PASO 3: PRONÓSTICO DETALLADO (FORECAST AI) ---
 elif st.session_state.step == 3:
     st.header("3️⃣ Pronóstico Detallado (Forecast AI)")
     df = st.session_state.data
+    df['ds'] = pd.to_datetime(df['ds'])
+    
     col_f1, col_f2 = st.columns(2)
     f_ini = col_f1.date_input("Inicio Forecast", df['ds'].max().date())
     f_fin = col_f2.date_input("Fin Forecast", df['ds'].max().date() + timedelta(days=7))
     
     if st.button("🚀 Ejecutar Prophet"):
-        periodos = ((f_fin - f_ini).days + 1) * 48
-        with st.spinner("Entrenando modelos de doble joroba..."):
-            forecast = run_prophet(df, periodos)
-            forecast['yhat'] = forecast['yhat'].clip(lower=0).round().astype(int)
-            st.session_state.current_forecast = forecast
+        # Calculamos periodos necesarios hasta la fecha fin deseada
+        dias_totales = (pd.to_datetime(f_fin).date() - df['ds'].min().date()).days
+        periodos = dias_totales * 48
+        
+        with st.spinner("Entrenando modelos..."):
+            forecast_full = run_prophet(df, periodos)
+            
+            # FILTRO ESTRICTO: Solo lo que el usuario pidió
+            mask = (forecast_full['ds'] >= pd.to_datetime(f_ini)) & (forecast_full['ds'] <= pd.to_datetime(f_fin))
+            forecast_filtered = forecast_full.loc[mask].copy()
+            forecast_filtered['yhat'] = forecast_filtered['yhat'].clip(lower=0).round().astype(int)
+            
+            st.session_state.current_forecast = forecast_filtered
             st.session_state.f_range = (pd.to_datetime(f_ini), pd.to_datetime(f_fin))
 
     if 'current_forecast' in st.session_state:
-        fig_f = go.Figure()
-        fig_f.add_trace(go.Scatter(x=df['ds'], y=df['y'], name='Histórico', line=dict(color='#4682B4')))
-        fig_f.add_trace(go.Scatter(x=st.session_state.current_forecast['ds'], y=st.session_state.current_forecast['yhat'], 
-                                   name='Forecast', line=dict(color='#FF8C00', dash='dot')))
-        st.plotly_chart(fig_f, use_container_width=True)
+        f_start, f_end = st.session_state.f_range
+        forecast = st.session_state.current_forecast
+        
+        # --- LÓGICA DE MÉTRICAS DE PRECISIÓN ---
+        # Buscamos intersección: fechas que están en el histórico Y en el pronóstico pedido
+        interseccion = df[(df['ds'] >= f_start) & (df['ds'] <= f_end)]
+        
+        if not interseccion.empty:
+            from sklearn.metrics import mean_absolute_percentage_error
+            # Cruzamos datos reales vs pronóstico por fecha
+            comparativa = interseccion.merge(forecast, on='ds')
+            if not comparativa.empty:
+                mape = mean_absolute_percentage_error(comparativa['y'], comparativa['yhat'])
+                st.metric("🎯 Precisión del Pronóstico (MAPE)", f"{mape:.2%}", 
+                          help="Mide el error entre el histórico real y el pronóstico en el periodo cruzado.")
+
+        # --- GRÁFICO UNIFICADO ---
+        fig = go.Figure()
+        # Histórico (Azul)
+        fig.add_trace(go.Scatter(x=df['ds'], y=df['y'], name='Histórico', line=dict(color='#4682B4')))
+        # Pronóstico filtrado (Naranja)
+        fig.add_trace(go.Scatter(x=forecast['ds'], y=forecast['yhat'], name='Forecast', line=dict(color='#FF8C00', dash='dot')))
+        
+        # Ajustamos el eje X para que no se vea vacío el futuro que no pediste
+        fig.update_xaxes(range=[df['ds'].min(), f_end])
+        st.plotly_chart(fig, use_container_width=True)
         
         c_c1, c_c2 = st.columns(2)
         if c_c1.button("⬅️ Atrás"): st.session_state.step = 2; st.rerun()
