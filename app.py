@@ -3,86 +3,107 @@ import pandas as pd
 import sys
 import os
 
-# 1. Configuración de Rutas
+# 1. Configuración de Rutas y Módulos
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
-# 2. Importación Segura
 try:
     from modules.data_loader import load_data
     from modules.models import run_prophet, run_sarima
     from modules.staffing import get_staffing_requirements
+    from modules.validator import calculate_metrics, get_error_heatmap
 except ImportError as e:
     st.error(f"Error al importar módulos: {e}")
     st.stop()
 
-st.set_page_config(layout="wide", page_title="WFM Interactive Forecast")
+# 2. Configuración de la página
+st.set_page_config(layout="wide", page_title="WFM Professional Suite")
 
-st.title("📞 Pronóstico de Llamadas e Intervalos")
+# --- BARRA LATERAL (SIDEBAR) SIEMPRE PRESENTE ---
+with st.sidebar:
+    st.image("https://img.freepik.com/free-vector/data-report-concept-illustration_114360-883.jpg", caption="WFM Forecasting Tool")
+    st.title("⚙️ Panel de Control")
+    st.markdown("---")
+    
+    # Módulo 1: Ingesta
+    st.header("1. Ingesta de Datos")
+    fuente = st.radio("Fuente:", ["Simulación Aleatoria", "Subir Archivo"])
+    archivo = st.file_uploader("Cargar histórico", type=['csv', 'xlsx']) if fuente == "Subir Archivo" else None
+    
+    st.markdown("---")
+    
+    # Módulo 2: Parámetros de Forecast
+    st.header("2. Configuración Forecast")
+    modelo_choice = st.selectbox("Algoritmo", ["Prophet", "SARIMA"])
+    
+    st.markdown("---")
+    
+    # Módulo 3: Parámetros WFM (Staffing)
+    st.header("3. Parámetros de Staffing")
+    aht = st.number_input("AHT (Segundos)", value=300)
+    sl = st.slider("Target SL (%)", 0.5, 0.99, 0.8)
+    shrinkage = st.slider("Shrinkage (%)", 0.0, 0.5, 0.3)
 
-# --- PASO 1: CARGA Y VISUALIZACIÓN INICIAL ---
-if 'data' not in st.session_state:
-    # Generamos o cargamos los datos (180 días por defecto)
-    st.session_state.data = load_data("Simulación Aleatoria")
+# --- CUERPO PRINCIPAL: FLUJO PASO A PASO ---
+st.title("🚀 Flujo de Planificación de Call Center")
 
-df = st.session_state.data
-pcrcs = df['pcrc'].unique()
+# PASO 1: Carga y Visualización del Histórico
+data = load_data(fuente, archivo)
 
-st.sidebar.header("Configuración Inicial")
-pcrc_selected = st.sidebar.selectbox("Selecciona el PCRC", pcrcs)
+if data is not None:
+    pcrc_selected = st.selectbox("Selecciona PCRC para analizar", data['pcrc'].unique())
+    df_pcrc = data[data['pcrc'] == pcrc_selected].copy()
+    df_pcrc['y'] = df_pcrc['y'].round().astype(int)
 
-# Filtrar datos del PCRC seleccionado
-df_pcrc = df[df['pcrc'] == pcrc_selected].copy()
-df_pcrc['y'] = df_pcrc['y'].round().astype(int) # Asegurar números enteros
+    st.subheader("📊 Paso 1: Análisis del Histórico")
+    st.line_chart(df_pcrc.set_index('ds')['y'])
+    
+    st.markdown("---")
 
-st.subheader(f"Histórico de Llamadas: {pcrc_selected}")
-fecha_limite_hist = df_pcrc['ds'].max()
-st.write(f"Datos disponibles hasta: **{fecha_limite_hist.strftime('%d/%m/%Y %H:%M')}**")
+    # PASO 2: Selección de Rango y Ejecución de Pronóstico
+    st.subheader("🎯 Paso 2: Ejecución del Pronóstico")
+    col_f1, col_f2 = st.columns(2)
+    with col_f1:
+        f_inicio = st.date_input("Inicio Forecast", df_pcrc['ds'].max() + pd.Timedelta(days=1))
+    with col_f2:
+        f_fin = st.date_input("Fin Forecast", df_pcrc['ds'].max() + pd.Timedelta(days=7))
 
-# Gráfico del histórico
-st.line_chart(df_pcrc.set_index('ds')['y'])
+    if st.button("Generar Pronóstico"):
+        # Cálculo de periodos
+        dias = (f_fin - f_inicio).days + 1
+        periodos = dias * 48 # Intervalos de 30 min
 
-st.markdown("---")
-
-# --- PASO 2: SOLICITUD DE RANGO DE PRONÓSTICO ---
-st.subheader("🎯 Configuración del Pronóstico")
-col1, col2 = st.columns(2)
-
-with col1:
-    fecha_inicio = st.date_input("Fecha de inicio del pronóstico", fecha_limite_hist + pd.Timedelta(days=1))
-with col2:
-    fecha_fin = st.date_input("Fecha final del pronóstico", fecha_limite_hist + pd.Timedelta(days=7))
-
-# Calcular cuántos intervalos de 30 min hay en ese rango
-diferencia_dias = (fecha_fin - fecha_inicio).days + 1
-periodos_30min = diferencia_dias * 48
-
-if st.button("Generar Pronóstico"):
-    if fecha_fin < fecha_inicio:
-        st.error("La fecha final debe ser posterior a la fecha de inicio.")
-    else:
-        with st.spinner(f"Calculando pronóstico para {diferencia_dias} días..."):
-            # Ejecutar modelo (usamos Prophet por defecto para este ejemplo)
-            forecast = run_prophet(df_pcrc, periodos_30min)
+        with st.spinner('Entrenando modelos y calculando dimensionamiento...'):
+            # Ejecutar Forecast
+            if modelo_choice == "Prophet":
+                forecast = run_prophet(df_pcrc, periodos)
+            else:
+                forecast = run_sarima(df_pcrc, periodos)
             
-            # Asegurar que las llamadas proyectadas sean enteros positivos
             forecast['yhat'] = forecast['yhat'].clip(lower=0).round().astype(int)
-            forecast['yhat_lower'] = forecast['yhat_lower'].clip(lower=0).round().astype(int)
-            forecast['yhat_upper'] = forecast['yhat_upper'].clip(lower=0).round().astype(int)
+            
+            # PASO 3: Staffing (Automático tras el forecast)
+            res_wfm = get_staffing_requirements(forecast, aht, sl, shrinkage)
 
-            # Filtrar el resultado para que empiece exactamente en la fecha elegida
-            forecast = forecast[forecast['ds'].dt.date >= fecha_inicio]
+            # --- RESULTADOS FINALES ---
+            st.markdown("---")
+            st.subheader("✅ Paso 3: Resultados del Dimensionamiento")
+            
+            tab1, tab2, tab3 = st.tabs(["📈 Volumen Proyectado", "👥 Staffing Requerido", "🔥 Calidad/Heatmap"])
+            
+            with tab1:
+                st.line_chart(res_wfm.set_index('ds')['yhat'])
+                st.dataframe(res_wfm[['ds', 'yhat']])
 
-            st.success(f"Pronóstico generado con éxito desde {fecha_inicio} hasta {fecha_fin}")
-            
-            # Visualización de resultados
-            tab_graf, tab_data = st.tabs(["📈 Gráfico", "📄 Datos Proyectados"])
-            
-            with tab_graf:
-                st.line_chart(forecast.set_index('ds')[['yhat', 'yhat_lower', 'yhat_upper']])
-            
-            with tab_data:
-                st.dataframe(forecast)
-                
-            # Opción para continuar al Staffing
-            st.session_state.forecast_final = forecast
-            st.info("Ahora puedes dirigirte al módulo de Staffing en la barra lateral si deseas calcular agentes.")
+            with tab2:
+                st.line_chart(res_wfm.set_index('ds')[['agentes_netos', 'agentes_nominales']])
+                c1, c2 = st.columns(2)
+                c1.metric("Pico de Agentes Requeridos", int(res_wfm['agentes_netos'].max()))
+                c2.metric("Plantilla Total Sugerida", int(res_wfm['agentes_nominales'].max()))
+
+            with tab3:
+                # Simulamos datos reales para el heatmap (usando los últimos días del histórico)
+                # En producción aquí compararías forecast vs actuals
+                st.plotly_chart(get_error_heatmap(res_wfm))
+
+else:
+    st.info("Utiliza la barra lateral izquierda para cargar datos y comenzar el proceso.")
