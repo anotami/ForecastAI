@@ -46,17 +46,32 @@ if data is not None:
         if st.button("Validar Meses y Continuar"):
             st.success("Volumen mensual validado.")
 
-    # --- PASO 2: DIARIO (DISTRIBUCIÓN) ---
+# --- PASO 2: DIARIO (DISTRIBUCIÓN) ---
     st.header("Paso 2: Pronóstico Diario (Day-of-Week)")
     with st.expander("Ver Análisis Diario"):
         df_daily = df_pcrc.copy()
+        
+        # 1. Extraemos el nombre del día
         df_daily['dia_nombre'] = df_daily['ds'].dt.day_name()
-        order = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
-        resumen_semanal = df_daily.groupby('dia_nombre')['y'].mean().reindex(order)
+        
+        # 2. Definimos el orden correcto (Lunes a Domingo)
+        # Nota: Si tu sistema está en español, usa los nombres en inglés aquí 
+        # porque pandas.dt.day_name() devuelve nombres en inglés por defecto.
+        dias_ordenados = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
+        
+        # 3. Convertimos a categoría con orden específico
+        df_daily['dia_nombre'] = pd.Categorical(df_daily['dia_nombre'], categories=dias_ordenados, ordered=True)
+        
+        # 4. Agrupamos y ordenamos por la categoría
+        resumen_semanal = df_daily.groupby('dia_nombre')['y'].mean()
+        
+        # Mostrar el gráfico
         st.bar_chart(resumen_semanal)
-        st.caption("Validación: Lunes-Viernes (Pico), Sábado (70%), Domingo (30%)")
+        
+        st.caption("Validación de distribución semanal: Lunes-Viernes (Pico), Sábado (70%), Domingo (30%)")
+        
         if st.button("Validar Días y Continuar"):
-            st.success("Distribución diaria validada.")
+            st.success("Distribución diaria validada correctamente.")
 
     # --- PASO 3: INTERVALO (30 MIN) ---
     st.header("Paso 3: Pronóstico por Intervalo (30 min)")
