@@ -3,22 +3,17 @@ from prophet import Prophet
 from statsmodels.tsa.statespace.sarimax import SARIMAX
 
 def run_prophet(df, periods):
-    # Mayor flexibilidad para seguir los picos del histórico
-    m = Prophet(
-        daily_seasonality=True, 
-        weekly_seasonality=True,
-        changepoint_prior_scale=0.5, 
-        seasonality_prior_scale=10.0
-    )
+    m = Prophet(daily_seasonality=True, weekly_seasonality=True, 
+                changepoint_prior_scale=0.5, seasonality_prior_scale=10.0)
     m.fit(df[['ds', 'y']])
     future = m.make_future_dataframe(periods=periods, freq='30min')
     forecast = m.predict(future)
     return forecast[['ds', 'yhat']]
 
 def run_sarima(df, periods):
-    # SARIMA configurado para ciclos diarios de 48 intervalos
+    # Optimizamos el entrenamiento para que no sea infinito
     model = SARIMAX(df['y'], order=(1, 1, 1), seasonal_order=(1, 1, 1, 48))
-    model_fit = model.fit(disp=False)
+    model_fit = model.fit(disp=False, method='powell') # Método más rápido
     forecast = model_fit.get_forecast(steps=periods)
     
     last_date = df['ds'].max()
